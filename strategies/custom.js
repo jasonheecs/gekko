@@ -1,63 +1,119 @@
-// This is a basic example strategy for Gekko.
-// For more information on everything please refer
-// to this document:
-//
-// https://gekko.wizb.it/docs/strategies/creating_a_strategy.html
-//
-// The example below is pretty bad investment advice: on every new candle there is
-// a 10% chance it will recommend to change your position (to either
-// long or short).
+// helpers
+var _ = require('lodash');
+var log = require('../core/log.js');
 
-var log = require('../core/log');
+// let's create our own method
+var method = {};
 
-// Let's create our own strat
-var strat = {};
+// prepare everything our method needs
+method.init = function() {
+  this.currentTrend;
+  this.requiredHistory = this.tradingAdvisor.historySize;
 
-// Prepare everything our method needs
-strat.init = function() {
-  this.input = 'candle';
-  this.currentTrend = 'long';
-  this.requiredHistory = 0;
+  this.age = 0;
+  this.trend = {
+    direction: 'undefined',
+    duration: 0,
+    persisted: false,
+    adviced: false
+  };
+  this.historySize = this.tradingAdvisor.historySize;
+  this.ppoadv = 'none';
+  this.uplevel = this.settings.thresholds.up;
+  this.downlevel = this.settings.thresholds.down;
+  this.persisted = this.settings.thresholds.persistence;
+  this.addIndicator('custom', 'Custom', this.settings);
 }
 
-// What happens on every new candle?
-strat.update = function(candle) {
+// for debugging purposes: log the last calculated
+// EMAs and diff.
+method.log = function() {
+    var strat = this.indicators.strat;
+    if (typeof(strat.result) == 'boolean') {
+        log.debug('Insufficient data available. Age: ', strat.size, ' of ', strat.maxSize);
+        log.debug('ind: ', strat.TP.result, ' ', strat.TP.age, ' ', strat.TP.depth);
+        return;
+    }
 
-  // Get a random number between 0 and 1.
-  this.randomNumber = Math.random();
-
-  // There is a 10% chance it is smaller than 0.1
-  this.toUpdate = this.randomNumber < 0.1;
+    log.debug('calculated strat properties for candle:');
+    log.debug('\t', 'Price:\t\t\t', this.lastPrice);
+    log.debug('\t', 'strat tp:\t', strat.tp.toFixed(8));
+    log.debug('\t', 'strat tp/n:\t', strat.TP.result.toFixed(8));
+    log.debug('\t', 'strat md:\t', strat.mean.toFixed(8));
+    if (typeof(strat.result) == 'boolean' )
+        log.debug('\t In sufficient data available.');
+    else
+        log.debug('\t', 'strat:\t', strat.result.toFixed(2));
 }
 
-// For debugging purposes.
-strat.log = function() {
-  log.debug('calculated random number:');
-  log.debug('\t', this.randomNumber.toFixed(3));
+/*
+ *
+ */
+method.check = function(candle) {
+
+  var price = candle.close;
+
+    this.age++;
+    var strat = this.indicators.strat;
+
+    if (typeof(strat.result) == 'number') {
+
+        // overbought?
+        if (strat.result >= this.uplevel && (this.trend.persisted || this.persisted == 0) && !this.trend.adviced && this.trend.direction == 'overbought' ) {
+            this.trend.adviced = true;
+            this.trend.duration++;
+            this.advice('short');
+        } else if (strat.result >= this.uplevel && this.trend.direction != 'overbought') {
+            this.trend.duration = 1;
+            this.trend.direction = 'overbought';
+            this.trend.persisted = false;
+            this.trend.adviced = false;
+            if (this.persisted == 0) {
+                this.trend.adviced = true;
+                this.advice('short');
+            }
+        } else if (strat.result >= this.uplevel) {
+            this.trend.duration++;
+            if (this.trend.duration >= this.persisted) {
+                this.trend.persisted = true;
+            }
+        } else if (strat.result <= this.downlevel && (this.trend.persisted || this.persisted == 0) && !this.trend.adviced && this.trend.direction == 'oversold') {
+            this.trend.adviced = true;
+            this.trend.duration++;
+            this.advice('long');
+        } else if (strat.result <= this.downlevel && this.trend.direction != 'oversold') {
+            this.trend.duration = 1;
+            this.trend.direction = 'oversold';
+            this.trend.persisted = false;
+            this.trend.adviced = false;
+            if (this.persisted == 0) {
+                this.trend.adviced = true;
+                this.advice('long');
+            }
+        } else if (strat.result <= this.downlevel) {
+            this.trend.duration++;
+            if (this.trend.duration >= this.persisted) {
+                this.trend.persisted = true;
+            }
+        } else {
+            if( this.trend.direction != 'nodirection') {
+                this.trend = {
+                    direction: 'nodirection',
+                    duration: 0,
+                    persisted: false,
+                    adviced: false
+                };
+            } else {
+                this.trend.duration++;
+            }
+            this.advice();
+        }
+
+    } else {
+        this.advice();
+    }
+
+    log.debug("Trend: ", this.trend.direction, " for ", this.trend.duration);
 }
 
-// Based on the newly calculated
-// information, check if we should
-// update or not.
-strat.check = function() {
-
-  // Only continue if we have a new update.
-  if(!this.toUpdate)
-    return;
-
-  if(this.currentTrend === 'long') {
-
-    // If it was long, set it to short
-    this.currentTrend = 'short';
-    this.advice('short');
-
-  } else {
-
-    // If it was short, set it to long
-    this.currentTrend = 'long';
-    this.advice('long');
-
-  }
-}
-
-module.exports = strat;
+module.exports = method;
